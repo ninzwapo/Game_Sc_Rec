@@ -10,9 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_screen_recording:
-  git:
-    url: https://github.com/SatoshiRobatoFujimoto/flutter_screen_recording.git
-    ref: fix/v2-embedding
+    git:
+      url: https://github.com/rm-gdev/flutter_screen_recording
+      ref: main
   path_provider: ^2.1.2
   permission_handler: ^11.3.1
   intl: ^0.19.0
