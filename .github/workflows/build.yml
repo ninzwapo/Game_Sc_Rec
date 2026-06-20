@@ -23,6 +23,13 @@ jobs:
         run: flutter pub cache repair
       - name: Install dependencies
         run: flutter pub get
+      - name: Patch flutter_overlay_window namespace
+        run: |
+          OVERLAY_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/build.gradle"
+          if ! grep -q "namespace" "$OVERLAY_BUILD"; then
+            sed -i "s/android {/android {\n    namespace 'flutter.overlay.window.flutter_overlay_window'/" "$OVERLAY_BUILD"
+            echo "Patched namespace into flutter_overlay_window"
+          fi
       - name: Create default launcher icons
         run: |
           mkdir -p android/app/src/main/res/mipmap-mdpi
@@ -31,25 +38,21 @@ jobs:
           mkdir -p android/app/src/main/res/mipmap-xxhdpi
           mkdir -p android/app/src/main/res/mipmap-xxxhdpi
           python3 << 'EOF'
-          import struct, zlib, os
+          import struct, zlib
 
           def make_png(size, path):
               def chunk(name, data):
                   c = name + data
                   return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
-              
               sig = b'\x89PNG\r\n\x1a\n'
               ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
-              
               raw = b''
               for y in range(size):
                   raw += b'\x00'
                   for x in range(size):
                       raw += bytes([33, 150, 243])
-              
               idat = chunk(b'IDAT', zlib.compress(raw))
               iend = chunk(b'IEND', b'')
-              
               with open(path, 'wb') as f:
                   f.write(sig + ihdr + idat + iend)
 
