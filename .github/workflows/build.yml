@@ -25,14 +25,19 @@ jobs:
         run: flutter pub get
       - name: Patch missing namespaces
         run: |
-          # Patch flutter_overlay_window
+          # Patch flutter_overlay_window build.gradle
           OVERLAY_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/build.gradle"
           if ! grep -q "namespace" "$OVERLAY_BUILD"; then
-            sed -i "s/android {/android {\n    namespace 'flutter.overlay.window.flutter_overlay_window'/" "$OVERLAY_BUILD"
-            echo "Patched flutter_overlay_window"
+            sed -i "s/android {/android {\n    namespace 'com.example.flutter_overlay_window'/" "$OVERLAY_BUILD"
+            echo "Patched flutter_overlay_window build.gradle"
           fi
 
-          # Patch flutter_screen_recording namespace in build.gradle
+          # Remove package attribute from flutter_overlay_window AndroidManifest.xml
+          OVERLAY_MANIFEST="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/src/main/AndroidManifest.xml"
+          sed -i 's/package="com.example.flutter_overlay_window"//g' "$OVERLAY_MANIFEST"
+          echo "Patched flutter_overlay_window AndroidManifest.xml"
+
+          # Patch flutter_screen_recording build.gradle
           SCREEN_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_screen_recording-2.0.19/android/build.gradle"
           if ! grep -q "namespace" "$SCREEN_BUILD"; then
             sed -i "s/android {/android {\n    namespace 'com.isvisoft.flutter_screen_recording'/" "$SCREEN_BUILD"
