@@ -23,6 +23,15 @@ jobs:
         run: flutter pub cache repair
       - name: Install dependencies
         run: flutter pub get
+      - name: Create default launcher icons
+        run: |
+          FLUTTER_ROOT=$(flutter --version --machine | python3 -c "import sys,json; print(json.load(sys.stdin)['flutterRoot'])")
+          DEFAULT_ICON="$FLUTTER_ROOT/packages/flutter_tools/templates/app/android.tmpl/app/src/main/res"
+          cp -r "$DEFAULT_ICON"/mipmap-hdpi android/app/src/main/res/
+          cp -r "$DEFAULT_ICON"/mipmap-mdpi android/app/src/main/res/
+          cp -r "$DEFAULT_ICON"/mipmap-xhdpi android/app/src/main/res/
+          cp -r "$DEFAULT_ICON"/mipmap-xxhdpi android/app/src/main/res/
+          cp -r "$DEFAULT_ICON"/mipmap-xxxhdpi android/app/src/main/res/
       - name: Build APK
         run: flutter build apk --release
       - name: Upload APK artifact
