@@ -30,19 +30,40 @@ jobs:
           mkdir -p android/app/src/main/res/mipmap-xhdpi
           mkdir -p android/app/src/main/res/mipmap-xxhdpi
           mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-          python3 -c "
-          from PIL import Image
+          python3 << 'EOF'
+          import struct, zlib, os
+
+          def make_png(size, path):
+              def chunk(name, data):
+                  c = name + data
+                  return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+              
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+              
+              raw = b''
+              for y in range(size):
+                  raw += b'\x00'
+                  for x in range(size):
+                      raw += bytes([33, 150, 243])
+              
+              idat = chunk(b'IDAT', zlib.compress(raw))
+              iend = chunk(b'IEND', b'')
+              
+              with open(path, 'wb') as f:
+                  f.write(sig + ihdr + idat + iend)
+
           sizes = {
-            'mipmap-mdpi': 48,
-            'mipmap-hdpi': 72,
-            'mipmap-xhdpi': 96,
-            'mipmap-xxhdpi': 144,
-            'mipmap-xxxhdpi': 192,
+              'mipmap-mdpi': 48,
+              'mipmap-hdpi': 72,
+              'mipmap-xhdpi': 96,
+              'mipmap-xxhdpi': 144,
+              'mipmap-xxxhdpi': 192,
           }
           for folder, size in sizes.items():
-            img = Image.new('RGB', (size, size), color=(33, 150, 243))
-            img.save(f'android/app/src/main/res/{folder}/ic_launcher.png')
-          "
+              make_png(size, f'android/app/src/main/res/{folder}/ic_launcher.png')
+          print('Icons created successfully')
+          EOF
       - name: Build APK
         run: flutter build apk --release
       - name: Upload APK artifact
