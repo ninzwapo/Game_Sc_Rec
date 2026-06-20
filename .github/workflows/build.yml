@@ -48,6 +48,11 @@ jobs:
           SCREEN_MANIFEST="$HOME/.pub-cache/hosted/pub.dev/flutter_screen_recording-2.0.19/android/src/main/AndroidManifest.xml"
           sed -i 's/package="com.isvisoft.flutter_screen_recording"//g' "$SCREEN_MANIFEST"
           echo "Patched flutter_screen_recording AndroidManifest.xml"
+
+          # Patch flutter_screen_recording ForegroundService.kt - fix missing drawable reference
+          FOREGROUND_KT="$HOME/.pub-cache/hosted/pub.dev/flutter_screen_recording-2.0.19/android/src/main/kotlin/com/isvisoft/flutter_screen_recording/ForegroundService.kt"
+          sed -i 's/R\.drawable\.[a-zA-Z_]*/android.R.drawable.ic_media_play/' "$FOREGROUND_KT"
+          echo "Patched ForegroundService.kt drawable reference"
       - name: Create default launcher icons
         run: |
           mkdir -p android/app/src/main/res/mipmap-mdpi
