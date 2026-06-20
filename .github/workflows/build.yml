@@ -23,12 +23,20 @@ jobs:
         run: flutter pub cache repair
       - name: Install dependencies
         run: flutter pub get
-      - name: Patch flutter_overlay_window namespace
+      - name: Patch missing namespaces
         run: |
+          # Patch flutter_overlay_window
           OVERLAY_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/build.gradle"
           if ! grep -q "namespace" "$OVERLAY_BUILD"; then
             sed -i "s/android {/android {\n    namespace 'flutter.overlay.window.flutter_overlay_window'/" "$OVERLAY_BUILD"
-            echo "Patched namespace into flutter_overlay_window"
+            echo "Patched flutter_overlay_window"
+          fi
+
+          # Patch flutter_screen_recording
+          SCREEN_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_screen_recording-2.0.19/android/build.gradle"
+          if ! grep -q "namespace" "$SCREEN_BUILD"; then
+            sed -i "s/android {/android {\n    namespace 'com.foregroundservice.flutter_screen_recording'/" "$SCREEN_BUILD"
+            echo "Patched flutter_screen_recording"
           fi
       - name: Create default launcher icons
         run: |
