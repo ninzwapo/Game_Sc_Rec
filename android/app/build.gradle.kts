@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.game_recorder"
-    compileSdk = 33
+    compileSdk = 35
     ndkVersion = "25.1.8937393"
 
     compileOptions {
@@ -21,7 +21,7 @@ android {
     defaultConfig {
         applicationId = "com.example.game_recorder"
         minSdk = 23
-        targetSdk = 33
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
     }
