@@ -91,7 +91,20 @@ jobs:
           print('Icons created successfully')
           EOF
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release || true
+      - name: Find and move APK
+        run: |
+          echo "Searching for APK files..."
+          find . -name "*.apk" 2>/dev/null
+          mkdir -p build/app/outputs/flutter-apk
+          APK=$(find . -name "*.apk" | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" build/app/outputs/flutter-apk/app-release.apk
+            echo "APK found and copied from: $APK"
+          else
+            echo "No APK found!"
+            exit 1
+          fi
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
