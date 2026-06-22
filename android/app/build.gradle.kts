@@ -33,6 +33,10 @@ android {
     }
 }
 
+dependencies {
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+}
+
 flutter {
     source = "../.."
 }
