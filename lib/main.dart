@@ -1,11 +1,10 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
-import 'screens/recorder_screen.dart';
+import 'screens/main_screen.dart';
 import 'screens/overlay_screen.dart';
 
-// Entry point for the floating overlay window (shown above Chrome).
-@pragma("vm:entry-point")
+@pragma('vm:entry-point')
 void overlayMain() {
   runApp(const OverlayApp());
 }
@@ -34,7 +33,7 @@ class GameRecorderApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: const RecorderScreen(),
+      home: const MainScreen(),
     );
   }
 }

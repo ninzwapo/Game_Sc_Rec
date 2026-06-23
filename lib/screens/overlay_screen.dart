@@ -1,14 +1,12 @@
 // lib/screens/overlay_screen.dart
 //
-// This is the widget shown in the floating overlay above Chrome.
-// It displays the saved pattern lines as a compact draggable panel.
-// flutter_overlay_window renders this as the overlay content.
+// Floating overlay shown above Chrome/game.
+// Shows live % reading, monitoring status, and last trigger.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
-import '../services/saved_pattern.dart';
 
-@pragma("vm:entry-point")
+@pragma('vm:entry-point')
 void overlayMain() {
   runApp(const OverlayApp());
 }
@@ -34,122 +32,182 @@ class OverlayScreen extends StatefulWidget {
 }
 
 class _OverlayScreenState extends State<OverlayScreen> {
-  List<SavedPattern> _patterns = [];
   bool _expanded = true;
+  double? _chartPct;
+  String? _lastTrigger;
+  String? _triggerDirection;
 
   @override
   void initState() {
     super.initState();
-    _loadPatterns();
     FlutterOverlayWindow.overlayListener.listen((data) {
-      if (data != null) _loadPatterns();
+      if (data == null) return;
+      if (data is Map) {
+        setState(() {
+          if (data['pct'] != null) {
+            _chartPct = (data['pct'] as num).toDouble();
+          }
+          if (data['trigger'] != null) {
+            final t = data['trigger'] as Map;
+            _lastTrigger =
+                '${t['pattern']} · Line ${t['line']} · ${(t['pct'] as num).toStringAsFixed(1)}%';
+            _triggerDirection = t['direction'] as String?;
+          }
+        });
+      }
     });
-  }
-
-  Future<void> _loadPatterns() async {
-    final patterns = await PatternStore.loadAll();
-    setState(() => _patterns = patterns);
   }
 
   @override
   Widget build(BuildContext context) {
+    final pct = _chartPct;
+    final inRange = pct != null && pct.abs() <= 30;
+    final isUp = pct != null && pct >= 0;
+
     return Material(
       color: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xE6161b22),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.tealAccent.withOpacity(0.4)),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 16)],
+          color: const Color(0xEE161b22),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: inRange
+                ? Colors.tealAccent.withOpacity(0.6)
+                : Colors.white24,
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.6),
+                blurRadius: 16)
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
+            // ── Header ──────────────────────────────────────────
             GestureDetector(
-              onTap: () => setState(() => _expanded = !_expanded),
+              onTap: () =>
+                  setState(() => _expanded = !_expanded),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.tealAccent.withOpacity(0.1),
+                  color: Colors.tealAccent.withOpacity(0.08),
                   borderRadius: BorderRadius.vertical(
-                    top: const Radius.circular(16),
-                    bottom: _expanded ? Radius.zero : const Radius.circular(16),
+                    top: const Radius.circular(14),
+                    bottom: _expanded
+                        ? Radius.zero
+                        : const Radius.circular(14),
                   ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Row(children: [
-                      Icon(Icons.videocam, color: Colors.tealAccent, size: 16),
-                      SizedBox(width: 6),
-                      Text('Game Recorder', style: TextStyle(color: Colors.tealAccent, fontSize: 13, fontWeight: FontWeight.bold)),
-                    ]),
-                    Row(children: [
-                      Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: Colors.white54, size: 18),
-                      const SizedBox(width: 4),
-                      GestureDetector(
-                        onTap: () => FlutterOverlayWindow.closeOverlay(),
-                        child: const Icon(Icons.close, color: Colors.white54, size: 18),
+                child: Row(children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.tealAccent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text('LIVE',
+                      style: TextStyle(
+                          color: Colors.tealAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1)),
+                  const SizedBox(width: 8),
+                  if (pct != null)
+                    Text(
+                      '${pct >= 0 ? '▲' : '▼'} ${pct.abs().toStringAsFixed(1)}%',
+                      style: TextStyle(
+                        color: isUp ? Colors.green : Colors.red,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
                       ),
-                    ]),
-                  ],
-                ),
+                    )
+                  else
+                    const Text('Reading…',
+                        style: TextStyle(
+                            color: Colors.white38, fontSize: 12)),
+                  const Spacer(),
+                  Icon(
+                    _expanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: Colors.white38,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () =>
+                        FlutterOverlayWindow.closeOverlay(),
+                    child: const Icon(Icons.close,
+                        color: Colors.white38, size: 18),
+                  ),
+                ]),
               ),
             ),
 
+            // ── Expanded content ─────────────────────────────────
             if (_expanded) ...[
-              if (_patterns.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('No patterns saved yet.\nOpen the app to record and place lines.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white54, fontSize: 12)),
-                )
-              else
-                ..._patterns.map((p) => _patternTile(p)),
+              // Range indicator
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 6),
+                child: Text(
+                  pct == null
+                      ? 'Waiting for screen data…'
+                      : (inRange
+                          ? '✅ In range (-30% to +30%) — Monitoring'
+                          : '⚠️ Out of range — Paused'),
+                  style: TextStyle(
+                    color: inRange ? Colors.tealAccent : Colors.orange,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+
+              // Last trigger
+              if (_lastTrigger != null)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: (_triggerDirection == 'up'
+                            ? Colors.green
+                            : Colors.red)
+                        .withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: (_triggerDirection == 'up'
+                              ? Colors.green
+                              : Colors.red)
+                          .withOpacity(0.4),
+                    ),
+                  ),
+                  child: Row(children: [
+                    Text(
+                      _triggerDirection == 'up' ? '📈' : '📉',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _lastTrigger!,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ]),
+                ),
             ],
           ],
         ),
       ),
-    );
-  }
-
-  Widget _patternTile(SavedPattern p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.white10)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(p.name, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Row(children: [
-            _lineChip('A', p.lines.a, const Color(0xFFef4444)),
-            const SizedBox(width: 6),
-            _lineChip('B', p.lines.b, const Color(0xFF22c55e)),
-            const SizedBox(width: 6),
-            _lineChip('C', p.lines.c, const Color(0xFFb91c1c)),
-            const SizedBox(width: 6),
-            _lineChip('D', p.lines.d, const Color(0xFF15803d)),
-          ]),
-        ],
-      ),
-    );
-  }
-
-  Widget _lineChip(String label, double val, Color color) {
-    final pct = '${val >= 0 ? '+' : ''}${val.toStringAsFixed(1)}%';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text('$label $pct', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
     );
   }
 }

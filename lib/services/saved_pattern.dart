@@ -4,36 +4,69 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum TriggerType { touch, passThrough, count }
-
 enum BetDirection { up, down }
 
-class LineSettings {
+class LineConfig {
+  final String label;       // A, B, C, D
+  final double value;       // % value e.g. +18.0
   final TriggerType triggerType;
   final BetDirection direction;
-  final double tolerance; // ± percentage
-  final int countTarget;  // only used when triggerType == count
+  final double tolerance;   // ±%
+  final int countTarget;
   final String telegramMessageUp;
   final String telegramMessageDown;
+  final bool enabled;       // disabled toggle
 
-  const LineSettings({
+  const LineConfig({
+    required this.label,
+    required this.value,
     this.triggerType = TriggerType.touch,
     this.direction = BetDirection.up,
     this.tolerance = 0.5,
     this.countTarget = 3,
     this.telegramMessageUp = '📈 BET UP triggered!',
     this.telegramMessageDown = '📉 BET DOWN triggered!',
+    this.enabled = true,
   });
 
+  LineConfig copyWith({
+    String? label,
+    double? value,
+    TriggerType? triggerType,
+    BetDirection? direction,
+    double? tolerance,
+    int? countTarget,
+    String? telegramMessageUp,
+    String? telegramMessageDown,
+    bool? enabled,
+  }) =>
+      LineConfig(
+        label: label ?? this.label,
+        value: value ?? this.value,
+        triggerType: triggerType ?? this.triggerType,
+        direction: direction ?? this.direction,
+        tolerance: tolerance ?? this.tolerance,
+        countTarget: countTarget ?? this.countTarget,
+        telegramMessageUp: telegramMessageUp ?? this.telegramMessageUp,
+        telegramMessageDown: telegramMessageDown ?? this.telegramMessageDown,
+        enabled: enabled ?? this.enabled,
+      );
+
   Map<String, dynamic> toJson() => {
+        'label': label,
+        'value': value,
         'triggerType': triggerType.name,
         'direction': direction.name,
         'tolerance': tolerance,
         'countTarget': countTarget,
         'telegramMessageUp': telegramMessageUp,
         'telegramMessageDown': telegramMessageDown,
+        'enabled': enabled,
       };
 
-  factory LineSettings.fromJson(Map<String, dynamic> j) => LineSettings(
+  factory LineConfig.fromJson(Map<String, dynamic> j) => LineConfig(
+        label: j['label'] as String,
+        value: (j['value'] as num).toDouble(),
         triggerType: TriggerType.values.firstWhere(
             (e) => e.name == j['triggerType'],
             orElse: () => TriggerType.touch),
@@ -46,140 +79,63 @@ class LineSettings {
             j['telegramMessageUp'] as String? ?? '📈 BET UP triggered!',
         telegramMessageDown:
             j['telegramMessageDown'] as String? ?? '📉 BET DOWN triggered!',
-      );
-
-  LineSettings copyWith({
-    TriggerType? triggerType,
-    BetDirection? direction,
-    double? tolerance,
-    int? countTarget,
-    String? telegramMessageUp,
-    String? telegramMessageDown,
-  }) =>
-      LineSettings(
-        triggerType: triggerType ?? this.triggerType,
-        direction: direction ?? this.direction,
-        tolerance: tolerance ?? this.tolerance,
-        countTarget: countTarget ?? this.countTarget,
-        telegramMessageUp: telegramMessageUp ?? this.telegramMessageUp,
-        telegramMessageDown: telegramMessageDown ?? this.telegramMessageDown,
-      );
-}
-
-class LineValues {
-  final double a;
-  final double b;
-  final double c;
-  final double d;
-
-  const LineValues({
-    required this.a,
-    required this.b,
-    required this.c,
-    required this.d,
-  });
-
-  Map<String, dynamic> toJson() => {'a': a, 'b': b, 'c': c, 'd': d};
-
-  factory LineValues.fromJson(Map<String, dynamic> j) => LineValues(
-        a: (j['a'] as num).toDouble(),
-        b: (j['b'] as num).toDouble(),
-        c: (j['c'] as num).toDouble(),
-        d: (j['d'] as num).toDouble(),
-      );
-
-  double operator [](String key) {
-    switch (key) {
-      case 'a': return a;
-      case 'b': return b;
-      case 'c': return c;
-      default:  return d;
-    }
-  }
-}
-
-class LineSettingsMap {
-  final LineSettings a;
-  final LineSettings b;
-  final LineSettings c;
-  final LineSettings d;
-
-  const LineSettingsMap({
-    this.a = const LineSettings(),
-    this.b = const LineSettings(),
-    this.c = const LineSettings(),
-    this.d = const LineSettings(),
-  });
-
-  LineSettings operator [](String key) {
-    switch (key) {
-      case 'a': return a;
-      case 'b': return b;
-      case 'c': return c;
-      default:  return d;
-    }
-  }
-
-  LineSettingsMap copyWithKey(String key, LineSettings s) {
-    return LineSettingsMap(
-      a: key == 'a' ? s : a,
-      b: key == 'b' ? s : b,
-      c: key == 'c' ? s : c,
-      d: key == 'd' ? s : d,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'a': a.toJson(),
-        'b': b.toJson(),
-        'c': c.toJson(),
-        'd': d.toJson(),
-      };
-
-  factory LineSettingsMap.fromJson(Map<String, dynamic> j) => LineSettingsMap(
-        a: LineSettings.fromJson(j['a'] as Map<String, dynamic>? ?? {}),
-        b: LineSettings.fromJson(j['b'] as Map<String, dynamic>? ?? {}),
-        c: LineSettings.fromJson(j['c'] as Map<String, dynamic>? ?? {}),
-        d: LineSettings.fromJson(j['d'] as Map<String, dynamic>? ?? {}),
+        enabled: j['enabled'] as bool? ?? true,
       );
 }
 
 class SavedPattern {
   final String id;
   final String name;
-  final LineValues lines;
-  final LineSettingsMap settings;
-  final DateTime createdAt;
+  final List<LineConfig> lines; // always 4: A, B, C, D
+  final bool active;            // whether this pattern is being monitored
 
   SavedPattern({
     required this.id,
     required this.name,
     required this.lines,
-    LineSettingsMap? settings,
-    required this.createdAt,
-  }) : settings = settings ?? const LineSettingsMap();
+    this.active = true,
+  });
+
+  SavedPattern copyWith({
+    String? id,
+    String? name,
+    List<LineConfig>? lines,
+    bool? active,
+  }) =>
+      SavedPattern(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        lines: lines ?? this.lines,
+        active: active ?? this.active,
+      );
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
-        'lines': lines.toJson(),
-        'settings': settings.toJson(),
-        'createdAt': createdAt.toIso8601String(),
+        'lines': lines.map((l) => l.toJson()).toList(),
+        'active': active,
       };
 
   factory SavedPattern.fromJson(Map<String, dynamic> j) => SavedPattern(
         id: j['id'] as String,
         name: j['name'] as String,
-        lines: LineValues.fromJson(j['lines'] as Map<String, dynamic>),
-        settings: j['settings'] != null
-            ? LineSettingsMap.fromJson(j['settings'] as Map<String, dynamic>)
-            : const LineSettingsMap(),
-        createdAt: DateTime.parse(j['createdAt'] as String),
+        lines: (j['lines'] as List<dynamic>)
+            .map((e) => LineConfig.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        active: j['active'] as bool? ?? true,
       );
+
+  /// Returns default 4 empty lines
+  static List<LineConfig> defaultLines() => [
+        const LineConfig(label: 'A', value: 0, enabled: false),
+        const LineConfig(label: 'B', value: 0, enabled: false),
+        const LineConfig(label: 'C', value: 0, enabled: false),
+        const LineConfig(label: 'D', value: 0, enabled: false),
+      ];
 }
 
 class PatternStore {
-  static const _key = 'saved_patterns_v3';
+  static const _key = 'saved_patterns_v4';
 
   static Future<List<SavedPattern>> loadAll() async {
     final prefs = await SharedPreferences.getInstance();
@@ -212,10 +168,7 @@ class PatternStore {
   }
 }
 
-// Global monitoring state
-class MonitorState {
-  static const _key = 'monitor_config';
-  static const _activePatternKey = 'active_pattern_id';
+class AppSettings {
   static const _botTokenKey = 'telegram_bot_token';
   static const _chatIdKey = 'telegram_chat_id';
 
@@ -226,7 +179,8 @@ class MonitorState {
 
   static Future<String> getBotToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_botTokenKey) ?? '8960569163:AAGQeHxLZENLAmoG9A2Yz0At73-vTuJn-Uo';
+    return prefs.getString(_botTokenKey) ??
+        '8960569163:AAGQeHxLZENLAmoG9A2Yz0At73-vTuJn-Uo';
   }
 
   static Future<void> saveChatId(String chatId) async {
@@ -237,16 +191,5 @@ class MonitorState {
   static Future<String> getChatId() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_chatIdKey) ?? '157828443';
-  }
-
-  static Future<void> setActivePattern(String? id) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (id == null) await prefs.remove(_activePatternKey);
-    else await prefs.setString(_activePatternKey, id);
-  }
-
-  static Future<String?> getActivePatternId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_activePatternKey);
   }
 }

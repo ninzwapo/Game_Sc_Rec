@@ -32,41 +32,32 @@ class MainActivity : FlutterActivity() {
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var pendingResult: MethodChannel.Result? = null
-    private var isReadingPercent = false
+    private var isReading = false
 
-    // Regex to find percentage like ▲18% or ▼-5.3% or +18% or -5%
     private val pctPattern =
         Pattern.compile("[▲▼+\\-]?\\s*(\\d{1,3}(?:\\.\\d{1,2})?)\\s*%")
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-
         projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            CHANNEL
+            flutterEngine.dartExecutor.binaryMessenger, CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "readChartPercent" -> {
                     if (mediaProjection == null) {
-                        // Request permission first
                         pendingResult = result
                         startActivityForResult(
                             projectionManager!!.createScreenCaptureIntent(),
                             PROJECTION_REQUEST
                         )
                     } else {
-                        captureAndReadPercent(result)
+                        captureAndOcr(result)
                     }
                 }
-                "autoTap" -> {
-                    val direction = call.argument<String>("direction") ?: "up"
-                    // Auto tap requires Accessibility Service
-                    // For now just acknowledge
-                    result.success(null)
-                }
+                "autoTap" -> result.success(null)
                 else -> result.notImplemented()
             }
         }
@@ -74,10 +65,11 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PROJECTION_REQUEST && resultCode == Activity.RESULT_OK && data != null) {
-            mediaProjection =
-                projectionManager!!.getMediaProjection(resultCode, data)
-            pendingResult?.let { captureAndReadPercent(it) }
+        if (requestCode == PROJECTION_REQUEST &&
+            resultCode == Activity.RESULT_OK && data != null
+        ) {
+            mediaProjection = projectionManager!!.getMediaProjection(resultCode, data)
+            pendingResult?.let { captureAndOcr(it) }
             pendingResult = null
         } else {
             pendingResult?.success(null)
@@ -85,15 +77,13 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun captureAndReadPercent(result: MethodChannel.Result) {
-        if (isReadingPercent) {
-            result.success(null)
-            return
-        }
-        isReadingPercent = true
+    private fun captureAndOcr(result: MethodChannel.Result) {
+        if (isReading) { result.success(null); return }
+        isReading = true
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
         wm.defaultDisplay.getMetrics(metrics)
 
         val width = metrics.widthPixels
@@ -105,18 +95,16 @@ class MainActivity : FlutterActivity() {
 
         virtualDisplay?.release()
         virtualDisplay = mediaProjection!!.createVirtualDisplay(
-            "ScreenCapture",
-            width, height, density,
+            "ScreenCapture", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader!!.surface,
-            null, null
+            imageReader!!.surface, null, null
         )
 
         Handler(Looper.getMainLooper()).postDelayed({
             try {
                 val image: Image? = imageReader!!.acquireLatestImage()
                 if (image == null) {
-                    isReadingPercent = false
+                    isReading = false
                     result.success(null)
                     return@postDelayed
                 }
@@ -128,21 +116,17 @@ class MainActivity : FlutterActivity() {
                 val rowPadding = rowStride - pixelStride * width
 
                 val bitmap = Bitmap.createBitmap(
-                    width + rowPadding / pixelStride,
-                    height,
-                    Bitmap.Config.ARGB_8888
+                    width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
                 )
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
 
-                // Crop top-center area where the % is shown
-                // Based on 747live layout: % is roughly top 40% center
-                val cropX = (width * 0.2).toInt()
-                val cropY = (height * 0.05).toInt()
-                val cropW = (width * 0.6).toInt()
-                val cropH = (height * 0.45).toInt()
-
-                val cropped = Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH)
+                // Crop top-center where 747live shows the %
+                val cx = (width * 0.15).toInt()
+                val cy = (height * 0.05).toInt()
+                val cw = (width * 0.70).toInt()
+                val ch = (height * 0.50).toInt()
+                val cropped = Bitmap.createBitmap(bitmap, cx, cy, cw, ch)
                 bitmap.recycle()
 
                 val inputImage = InputImage.fromBitmap(cropped, 0)
@@ -150,21 +134,17 @@ class MainActivity : FlutterActivity() {
 
                 recognizer.process(inputImage)
                     .addOnSuccessListener { visionText ->
-                        isReadingPercent = false
+                        isReading = false
                         virtualDisplay?.release()
-
-                        val text = visionText.text
-                        val pct = extractPercent(text)
-                        result.success(pct)
+                        result.success(extractPercent(visionText.text))
                     }
                     .addOnFailureListener {
-                        isReadingPercent = false
+                        isReading = false
                         virtualDisplay?.release()
                         result.success(null)
                     }
-
             } catch (e: Exception) {
-                isReadingPercent = false
+                isReading = false
                 virtualDisplay?.release()
                 result.success(null)
             }
@@ -172,24 +152,15 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun extractPercent(text: String): Double? {
-        // Look for the main chart percentage
-        // 747live shows it prominently as ▲18% or ▼-5%
-        val lines = text.lines()
-
-        for (line in lines) {
+        for (line in text.lines()) {
             val matcher = pctPattern.matcher(line)
             while (matcher.find()) {
                 val numStr = matcher.group(1) ?: continue
                 val num = numStr.toDoubleOrNull() ?: continue
-
-                // Determine sign
-                val hasDown = line.contains('▼') || line.contains('-')
+                val hasDown = line.contains('▼') ||
+                    (line.contains('-') && !line.contains('▲'))
                 val value = if (hasDown) -num else num
-
-                // Filter out unrealistic values (chart % is usually -100 to +100)
-                if (value.isFinite() && Math.abs(value) <= 100) {
-                    return value
-                }
+                if (value.isFinite() && Math.abs(value) <= 100) return value
             }
         }
         return null

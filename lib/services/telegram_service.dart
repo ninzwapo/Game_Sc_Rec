@@ -7,12 +7,10 @@ import 'saved_pattern.dart';
 class TelegramService {
   static Future<bool> sendMessage(String message) async {
     try {
-      final token = await MonitorState.getBotToken();
-      final chatId = await MonitorState.getChatId();
-
-      final url = Uri.parse(
-          'https://api.telegram.org/bot$token/sendMessage');
-
+      final token = await AppSettings.getBotToken();
+      final chatId = await AppSettings.getChatId();
+      final url =
+          Uri.parse('https://api.telegram.org/bot$token/sendMessage');
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
@@ -22,14 +20,13 @@ class TelegramService {
           'parse_mode': 'HTML',
         }),
       );
-
       return response.statusCode == 200;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
 
   static Future<bool> testConnection() async {
-    return await sendMessage('✅ Game Recorder connected! Monitoring active.');
+    return sendMessage('✅ Game Recorder connected! Live monitoring active.');
   }
 }
