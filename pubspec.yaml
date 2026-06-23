@@ -1,26 +1,96 @@
-name: game_recorder
-description: Live pattern monitor for 747live stock market game.
-publish_to: 'none'
-version: 1.0.0+1
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: false
+      - name: Clean pub cache
+        run: flutter pub cache repair
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Patch missing namespaces
+        run: |
+          # Patch flutter_overlay_window build.gradle
+          OVERLAY_BUILD="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/build.gradle"
+          if ! grep -q "namespace" "$OVERLAY_BUILD"; then
+            sed -i "s/android {/android {\n    namespace 'com.example.flutter_overlay_window'/" "$OVERLAY_BUILD"
+            echo "Patched flutter_overlay_window build.gradle"
+          fi
 
-environment:
-  sdk: '>=3.0.0 <4.0.0'
+          # Remove package attribute from flutter_overlay_window AndroidManifest.xml
+          OVERLAY_MANIFEST="$HOME/.pub-cache/hosted/pub.dev/flutter_overlay_window-0.3.3/android/src/main/AndroidManifest.xml"
+          sed -i 's/package="com.example.flutter_overlay_window"//g' "$OVERLAY_MANIFEST"
+          echo "Patched flutter_overlay_window AndroidManifest.xml"
+      - name: Create default launcher icons
+        run: |
+          mkdir -p android/app/src/main/res/mipmap-mdpi
+          mkdir -p android/app/src/main/res/mipmap-hdpi
+          mkdir -p android/app/src/main/res/mipmap-xhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          python3 << 'EOF'
+          import struct, zlib
 
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_overlay_window: ^0.3.0
-  path_provider: ^2.1.2
-  permission_handler: ^11.3.1
-  shared_preferences: ^2.2.2
-  intl: ^0.19.0
-  http: ^1.2.1
-  google_mlkit_text_recognition: ^0.11.0
+          def make_png(size, path):
+              def chunk(name, data):
+                  c = name + data
+                  return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+              raw = b''
+              for y in range(size):
+                  raw += b'\x00'
+                  for x in range(size):
+                      raw += bytes([33, 150, 243])
+              idat = chunk(b'IDAT', zlib.compress(raw))
+              iend = chunk(b'IEND', b'')
+              with open(path, 'wb') as f:
+                  f.write(sig + ihdr + idat + iend)
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-
-flutter:
-  uses-material-design: true
+          sizes = {
+              'mipmap-mdpi': 48,
+              'mipmap-hdpi': 72,
+              'mipmap-xhdpi': 96,
+              'mipmap-xxhdpi': 144,
+              'mipmap-xxxhdpi': 192,
+          }
+          for folder, size in sizes.items():
+              make_png(size, f'android/app/src/main/res/{folder}/ic_launcher.png')
+          print('Icons created successfully')
+          EOF
+      - name: Build APK
+        run: flutter build apk --release || true
+      - name: Find and move APK
+        run: |
+          echo "Searching for APK files..."
+          find . -name "*.apk" 2>/dev/null
+          mkdir -p build/app/outputs/flutter-apk
+          APK=$(find . -name "*.apk" | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" build/app/outputs/flutter-apk/app-release.apk
+            echo "APK found and copied from: $APK"
+          else
+            echo "No APK found!"
+            exit 1
+          fi
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-recorder-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 7
