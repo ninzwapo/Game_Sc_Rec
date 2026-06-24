@@ -24,7 +24,8 @@ import io.flutter.plugin.common.MethodChannel
 import java.util.regex.Pattern
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.example.game_recorder/monitor"
+    private val MONITOR_CHANNEL = "com.example.game_recorder/monitor"
+    private val OVERLAY_CMD_CHANNEL = "com.example.game_recorder/overlay_cmd"
     private val PROJECTION_REQUEST = 1001
 
     private var projectionManager: MediaProjectionManager? = null
@@ -39,11 +40,13 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
         projectionManager =
             getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
+        // Monitor channel - OCR screen reading
         MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger, CHANNEL
+            flutterEngine.dartExecutor.binaryMessenger, MONITOR_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "readChartPercent" -> {
@@ -60,6 +63,15 @@ class MainActivity : FlutterActivity() {
                 "autoTap" -> result.success(null)
                 else -> result.notImplemented()
             }
+        }
+
+        // Overlay command channel - receives commands from overlay
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger, OVERLAY_CMD_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            // Commands from overlay are handled in Dart (main_screen.dart)
+            // This channel just needs to exist on native side
+            result.success(null)
         }
     }
 
@@ -116,12 +128,13 @@ class MainActivity : FlutterActivity() {
                 val rowPadding = rowStride - pixelStride * width
 
                 val bitmap = Bitmap.createBitmap(
-                    width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+                    width + rowPadding / pixelStride, height,
+                    Bitmap.Config.ARGB_8888
                 )
                 bitmap.copyPixelsFromBuffer(buffer)
                 image.close()
 
-                // Crop top-center where 747live shows the %
+                // Crop to the area where 747live shows the % (top center)
                 val cx = (width * 0.15).toInt()
                 val cy = (height * 0.05).toInt()
                 val cw = (width * 0.70).toInt()
@@ -130,7 +143,8 @@ class MainActivity : FlutterActivity() {
                 bitmap.recycle()
 
                 val inputImage = InputImage.fromBitmap(cropped, 0)
-                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                val recognizer =
+                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
                 recognizer.process(inputImage)
                     .addOnSuccessListener { visionText ->

@@ -1,16 +1,14 @@
 // lib/screens/main_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import '../services/saved_pattern.dart';
 import '../services/monitor_service.dart';
 import '../services/telegram_service.dart';
-import '../services/overlay_service.dart';
-import 'pattern_editor_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
-
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
@@ -18,93 +16,105 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   List<SavedPattern> _patterns = [];
   bool _monitoring = false;
-  bool _overlayVisible = false;
   bool _overlayPermission = false;
   double? _liveChartPct;
   TriggerEvent? _lastTrigger;
+
+  static const _overlayCmd =
+      MethodChannel('com.example.game_recorder/overlay_cmd');
 
   @override
   void initState() {
     super.initState();
     _load();
     _checkOverlayPermission();
+
+    // Listen for commands FROM overlay
+    _overlayCmd.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'start':
+          _startMonitoring();
+          break;
+        case 'stop':
+          _stopMonitoring();
+          break;
+        case 'refresh':
+          await _load();
+          break;
+        case 'openTelegramSettings':
+          _showTelegramSettings();
+          break;
+      }
+    });
+
     MonitorService.instance.onValueUpdate = (pct) {
       if (mounted) setState(() => _liveChartPct = pct);
+      // Forward to overlay
+      _sendToOverlay({'pct': pct, 'monitoring': _monitoring});
     };
+
     MonitorService.instance.onTrigger = (event) {
       if (mounted) setState(() => _lastTrigger = event);
-      // Forward to overlay
-      OverlayService.sendData({
+      _sendToOverlay({
+        'pct': _liveChartPct,
+        'monitoring': true,
         'trigger': {
           'pattern': event.patternName,
           'line': event.lineLabel,
           'pct': event.chartPct,
           'direction': event.direction.name,
-        }
+        },
       });
     };
   }
 
+  Future<void> _sendToOverlay(Map<String, dynamic> data) async {
+    try {
+      await FlutterOverlayWindow.shareData(data);
+    } catch (_) {}
+  }
+
   Future<void> _load() async {
     final list = await PatternStore.loadAll();
-    setState(() => _patterns = list);
+    if (mounted) setState(() => _patterns = list);
     MonitorService.instance.setPatterns(list);
   }
 
   Future<void> _checkOverlayPermission() async {
     final granted = await FlutterOverlayWindow.isPermissionGranted();
-    setState(() => _overlayPermission = granted);
+    if (mounted) setState(() => _overlayPermission = granted);
   }
 
-  Future<void> _toggleMonitoring() async {
-    if (_monitoring) {
-      MonitorService.instance.stop();
-      if (_overlayVisible) {
-        await OverlayService.hideOverlay();
-        setState(() => _overlayVisible = false);
-      }
-      setState(() {
-        _monitoring = false;
-        _liveChartPct = null;
-      });
-    } else {
-      if (!_overlayPermission) {
-        await FlutterOverlayWindow.requestPermission();
-        await _checkOverlayPermission();
-        if (!_overlayPermission) return;
-      }
-      MonitorService.instance.setPatterns(_patterns);
-      MonitorService.instance.start();
-      await OverlayService.showOverlay();
-      setState(() {
-        _monitoring = true;
-        _overlayVisible = true;
-      });
+  Future<void> _ensureOverlayVisible() async {
+    final active = await FlutterOverlayWindow.isActive();
+    if (!active) {
+      await FlutterOverlayWindow.showOverlay(
+        height: WindowSize.matchParent,
+        width: WindowSize.matchParent,
+        alignment: OverlayAlignment.centerRight,
+        flag: OverlayFlag.defaultFlag,
+        overlayTitle: 'Game Recorder',
+        overlayContent: 'Tap the button to control monitoring',
+        enableDrag: true,
+        positionGravity: PositionGravity.auto,
+      );
     }
   }
 
-  Future<void> _togglePatternActive(SavedPattern p) async {
-    final updated = p.copyWith(active: !p.active);
-    await PatternStore.upsert(updated);
-    await _load();
-    if (_monitoring) {
-      MonitorService.instance.setPatterns(_patterns);
-    }
+  void _startMonitoring() {
+    MonitorService.instance.setPatterns(_patterns);
+    MonitorService.instance.start();
+    setState(() => _monitoring = true);
+    _sendToOverlay({'monitoring': true, 'pct': _liveChartPct});
   }
 
-  Future<void> _deletePattern(String id) async {
-    await PatternStore.delete(id);
-    await _load();
-  }
-
-  Future<void> _openEditor([SavedPattern? pattern]) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PatternEditorScreen(existing: pattern),
-      ),
-    );
-    await _load();
+  void _stopMonitoring() {
+    MonitorService.instance.stop();
+    setState(() {
+      _monitoring = false;
+      _liveChartPct = null;
+    });
+    _sendToOverlay({'monitoring': false, 'pct': null});
   }
 
   @override
@@ -118,300 +128,203 @@ class _MainScreenState extends State<MainScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.white54),
-            onPressed: _showSettings,
+            onPressed: _showTelegramSettings,
           ),
         ],
       ),
-      body: Column(children: [
-        // ── Live Monitor Banner ──────────────────────────────────
-        _buildMonitorBanner(),
-        // ── Patterns List ────────────────────────────────────────
-        Expanded(child: _buildPatternsList()),
-      ]),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.tealAccent,
-        onPressed: () => _openEditor(),
-        child: const Icon(Icons.add, color: Colors.black),
-      ),
-    );
-  }
-
-  Widget _buildMonitorBanner() {
-    final pct = _liveChartPct;
-    final inRange = pct != null && pct.abs() <= 30;
-
-    return GestureDetector(
-      onTap: _toggleMonitoring,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
-        decoration: BoxDecoration(
-          color: _monitoring
-              ? (inRange
-                  ? Colors.tealAccent.withOpacity(0.1)
-                  : Colors.orange.withOpacity(0.08))
-              : const Color(0xFF161b22),
-          border: Border(
-            bottom: BorderSide(
-              color: _monitoring
-                  ? (inRange ? Colors.tealAccent : Colors.orange)
-                  : Colors.white10,
-            ),
-          ),
-        ),
-        child: Row(children: [
-          // Status dot
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _monitoring
-                  ? (inRange ? Colors.tealAccent : Colors.orange)
-                  : Colors.white24,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _monitoring ? 'LIVE MONITORING' : 'TAP TO START',
-                  style: TextStyle(
-                    color: _monitoring ? Colors.tealAccent : Colors.white54,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
-                  ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Status card
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF161b22),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _monitoring
+                      ? Colors.tealAccent.withOpacity(0.4)
+                      : Colors.white10,
                 ),
-                if (_monitoring && pct != null)
-                  Text(
-                    '${pct >= 0 ? '▲' : '▼'} ${pct.abs().toStringAsFixed(1)}%  ${inRange ? '· In range' : '· Out of range (>30%)'}',
-                    style: TextStyle(
-                      color: inRange ? Colors.white70 : Colors.orange,
-                      fontSize: 12,
+              ),
+              child: Column(children: [
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Container(
+                    width: 10, height: 10,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _monitoring ? Colors.tealAccent : Colors.white24,
                     ),
-                  )
-                else if (_monitoring)
-                  const Text('Reading screen…',
-                      style:
-                          TextStyle(color: Colors.white38, fontSize: 12)),
-                if (_lastTrigger != null && _monitoring)
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _monitoring ? 'MONITORING ACTIVE' : 'NOT MONITORING',
+                    style: TextStyle(
+                      color: _monitoring ? Colors.tealAccent : Colors.white38,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ]),
+                if (_monitoring && _liveChartPct != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '${_liveChartPct! >= 0 ? '▲' : '▼'} ${_liveChartPct!.abs().toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontSize: 40,
+                      fontWeight: FontWeight.bold,
+                      color: _liveChartPct! >= 0 ? Colors.green : Colors.red,
+                    ),
+                  ),
+                ],
+                if (_lastTrigger != null && _monitoring) ...[
+                  const SizedBox(height: 8),
                   Text(
                     '🎯 ${_lastTrigger!.patternName} · Line ${_lastTrigger!.lineLabel} · ${_lastTrigger!.direction == BetDirection.up ? 'BET UP 📈' : 'BET DOWN 📉'}',
-                    style: const TextStyle(
-                        color: Colors.yellow, fontSize: 11),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.yellow, fontSize: 12),
                   ),
+                ],
+              ]),
+            ),
+            const SizedBox(height: 20),
+
+            // Launch overlay button
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.tealAccent,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              onPressed: _overlayPermission
+                  ? _ensureOverlayVisible
+                  : () async {
+                      await FlutterOverlayWindow.requestPermission();
+                      await _checkOverlayPermission();
+                    },
+              icon: const Icon(Icons.picture_in_picture,
+                  color: Colors.black),
+              label: Text(
+                _overlayPermission
+                    ? 'Show Floating Button'
+                    : 'Allow Overlay Permission',
+                style: const TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Start/Stop buttons
+            Row(children: [
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _monitoring
+                        ? Colors.redAccent
+                        : const Color(0xFF22c55e),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed:
+                      _monitoring ? _stopMonitoring : _startMonitoring,
+                  icon: Icon(
+                    _monitoring ? Icons.stop : Icons.play_arrow,
+                    color: Colors.white,
+                  ),
+                  label: Text(
+                    _monitoring ? 'Stop' : 'Start',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 24),
+
+            // Patterns count
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${_patterns.length} Pattern${_patterns.length == 1 ? '' : 's'}',
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 13),
+                ),
+                Text(
+                  '${_patterns.where((p) => p.active).length} active',
+                  style: const TextStyle(
+                      color: Colors.tealAccent, fontSize: 13),
+                ),
               ],
             ),
-          ),
-          // Start/Stop button
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: _monitoring
-                  ? Colors.redAccent.withOpacity(0.15)
-                  : Colors.tealAccent.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _monitoring ? Colors.redAccent : Colors.tealAccent,
-              ),
+            const SizedBox(height: 8),
+
+            // Pattern list preview
+            Expanded(
+              child: _patterns.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.add_chart,
+                              size: 48, color: Colors.white12),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'No patterns yet.\nUse the floating button over\nChrome to add patterns.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.white38, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _patterns.length,
+                      itemBuilder: (_, i) {
+                        final p = _patterns[i];
+                        return ListTile(
+                          dense: true,
+                          leading: Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: p.active
+                                  ? Colors.tealAccent
+                                  : Colors.white24,
+                            ),
+                          ),
+                          title: Text(p.name,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13)),
+                          subtitle: Text(
+                            '${p.lines.where((l) => l.enabled).length}/4 lines enabled',
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 11),
+                          ),
+                          trailing: Switch(
+                            value: p.active,
+                            activeColor: Colors.tealAccent,
+                            onChanged: (v) async {
+                              await PatternStore.upsert(
+                                  p.copyWith(active: v));
+                              await _load();
+                            },
+                          ),
+                        );
+                      },
+                    ),
             ),
-            child: Text(
-              _monitoring ? 'STOP' : 'START',
-              style: TextStyle(
-                color: _monitoring ? Colors.redAccent : Colors.tealAccent,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildPatternsList() {
-    if (_patterns.isEmpty) {
-      return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.add_chart, size: 64, color: Colors.white12),
-          const SizedBox(height: 16),
-          const Text('No patterns yet.',
-              style:
-                  TextStyle(color: Colors.white54, fontSize: 16)),
-          const SizedBox(height: 8),
-          const Text('Tap + to create your first pattern.',
-              style:
-                  TextStyle(color: Colors.white38, fontSize: 13)),
-        ]),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-      itemCount: _patterns.length,
-      itemBuilder: (context, i) => _patternCard(_patterns[i]),
-    );
-  }
-
-  Widget _patternCard(SavedPattern p) {
-    final enabledLines = p.lines.where((l) => l.enabled).toList();
-
-    return Card(
-      color: const Color(0xFF161b22),
-      margin: const EdgeInsets.only(bottom: 10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: p.active ? Colors.tealAccent.withOpacity(0.4) : Colors.white10,
+          ],
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Header
-          Row(children: [
-            Expanded(
-              child: Text(p.name,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15)),
-            ),
-            // Active toggle
-            GestureDetector(
-              onTap: () => _togglePatternActive(p),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: p.active
-                      ? Colors.tealAccent.withOpacity(0.15)
-                      : Colors.white10,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: p.active ? Colors.tealAccent : Colors.white24,
-                  ),
-                ),
-                child: Text(
-                  p.active ? 'ON' : 'OFF',
-                  style: TextStyle(
-                    color: p.active ? Colors.tealAccent : Colors.white38,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.edit_outlined,
-                  color: Colors.white38, size: 18),
-              onPressed: () => _openEditor(p),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.delete_outline,
-                  color: Colors.white24, size: 18),
-              onPressed: () => _confirmDelete(p.id),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          // Lines summary
-          if (enabledLines.isEmpty)
-            const Text('No lines enabled',
-                style: TextStyle(color: Colors.white24, fontSize: 12))
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: p.lines.map((line) {
-                final color = _lineColor(line.label);
-                return Opacity(
-                  opacity: line.enabled ? 1.0 : 0.3,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: color.withOpacity(0.5)),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text(
-                        line.label,
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${line.value >= 0 ? '+' : ''}${line.value.toStringAsFixed(1)}%',
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 11),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        line.direction == BetDirection.up ? '📈' : '📉',
-                        style: const TextStyle(fontSize: 10),
-                      ),
-                      if (!line.enabled)
-                        const Text(' OFF',
-                            style: TextStyle(
-                                color: Colors.white24, fontSize: 9)),
-                    ]),
-                  ),
-                );
-              }).toList(),
-            ),
-        ]),
-      ),
     );
   }
 
-  Color _lineColor(String label) => switch (label) {
-        'A' => const Color(0xFFef4444),
-        'B' => const Color(0xFF22c55e),
-        'C' => const Color(0xFFb91c1c),
-        _ => const Color(0xFF15803d),
-      };
-
-  void _confirmDelete(String id) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF21262d),
-        title: const Text('Delete Pattern?',
-            style: TextStyle(color: Colors.white)),
-        content: const Text('This cannot be undone.',
-            style: TextStyle(color: Colors.white54)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _deletePattern(id);
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSettings() {
+  void _showTelegramSettings() {
     final tokenCtrl = TextEditingController();
     final chatCtrl = TextEditingController();
     AppSettings.getBotToken().then((t) => tokenCtrl.text = t);

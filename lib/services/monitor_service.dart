@@ -14,12 +14,9 @@ class TriggerEvent {
   final DateTime time;
 
   TriggerEvent({
-    required this.patternId,
-    required this.patternName,
-    required this.lineLabel,
-    required this.chartPct,
-    required this.direction,
-    required this.time,
+    required this.patternId, required this.patternName,
+    required this.lineLabel, required this.chartPct,
+    required this.direction, required this.time,
   });
 }
 
@@ -27,9 +24,7 @@ typedef OnValueUpdate = void Function(double? pct);
 typedef OnTrigger = void Function(TriggerEvent event);
 
 class MonitorService {
-  static const _channel =
-      MethodChannel('com.example.game_recorder/monitor');
-
+  static const _channel = MethodChannel('com.example.game_recorder/monitor');
   static final MonitorService instance = MonitorService._();
   MonitorService._();
 
@@ -37,7 +32,6 @@ class MonitorService {
   bool _running = false;
   List<SavedPattern> _activePatterns = [];
 
-  // Per-line state tracking
   final Map<String, int> _crossCounts = {};
   final Map<String, bool> _wasAbove = {};
   final Map<String, DateTime> _lastTrigger = {};
@@ -76,20 +70,10 @@ class MonitorService {
 
   Future<void> _tick() async {
     if (!_running) return;
-
     final pct = await _readChartPercent();
     onValueUpdate?.call(pct);
-
-    if (pct == null) {
-      _lastValue = null;
-      return;
-    }
-
-    // Only act within -30% to +30%
-    if (pct.abs() > 30) {
-      _lastValue = pct;
-      return;
-    }
+    if (pct == null) { _lastValue = null; return; }
+    if (pct.abs() > 30) { _lastValue = pct; return; }
 
     for (final pattern in _activePatterns) {
       for (final line in pattern.lines) {
@@ -98,38 +82,28 @@ class MonitorService {
         _checkLine(key, line, pct, pattern);
       }
     }
-
     _lastValue = pct;
   }
 
-  void _checkLine(String key, LineConfig line, double currentPct,
-      SavedPattern pattern) {
+  void _checkLine(String key, LineConfig line, double pct, SavedPattern pattern) {
     final now = DateTime.now();
     final last = _lastTrigger[key];
     if (last != null && now.difference(last) < _cooldown) return;
 
     bool triggered = false;
-
     switch (line.triggerType) {
       case TriggerType.touch:
-        if ((currentPct - line.value).abs() <= line.tolerance) {
-          triggered = true;
-        }
+        if ((pct - line.value).abs() <= line.tolerance) triggered = true;
         break;
-
       case TriggerType.passThrough:
         if (_lastValue != null) {
-          final wasAbove = _lastValue! > line.value;
-          final isAbove = currentPct > line.value;
-          if (wasAbove != isAbove) triggered = true;
+          if ((_lastValue! > line.value) != (pct > line.value)) triggered = true;
         }
         break;
-
       case TriggerType.count:
         if (_lastValue != null) {
-          final wasAbove =
-              _wasAbove[key] ?? (_lastValue! > line.value);
-          final isAbove = currentPct > line.value;
+          final wasAbove = _wasAbove[key] ?? (_lastValue! > line.value);
+          final isAbove = pct > line.value;
           if (wasAbove != isAbove) {
             _crossCounts[key] = (_crossCounts[key] ?? 0) + 1;
             _wasAbove[key] = isAbove;
@@ -137,9 +111,7 @@ class MonitorService {
               _crossCounts[key] = 0;
               triggered = true;
             }
-          } else {
-            _wasAbove[key] = isAbove;
-          }
+          } else { _wasAbove[key] = isAbove; }
         }
         break;
     }
@@ -147,12 +119,9 @@ class MonitorService {
     if (triggered) {
       _lastTrigger[key] = now;
       final event = TriggerEvent(
-        patternId: pattern.id,
-        patternName: pattern.name,
-        lineLabel: line.label,
-        chartPct: currentPct,
-        direction: line.direction,
-        time: now,
+        patternId: pattern.id, patternName: pattern.name,
+        lineLabel: line.label, chartPct: pct,
+        direction: line.direction, time: now,
       );
       onTrigger?.call(event);
       _sendTelegram(event, line);
@@ -161,27 +130,18 @@ class MonitorService {
 
   void _sendTelegram(TriggerEvent event, LineConfig line) {
     final isUp = event.direction == BetDirection.up;
-    final customMsg =
-        isUp ? line.telegramMessageUp : line.telegramMessageDown;
-    final pctStr =
-        '${event.chartPct >= 0 ? '+' : ''}${event.chartPct.toStringAsFixed(1)}%';
-
     final msg = '${isUp ? '📈' : '📉'} <b>${event.patternName} — Line ${event.lineLabel} triggered!</b>\n'
-        'Chart: $pctStr\n'
+        'Chart: ${event.chartPct >= 0 ? '+' : ''}${event.chartPct.toStringAsFixed(1)}%\n'
         'Action: ${isUp ? 'BET UP ⬆️' : 'BET DOWN ⬇️'}\n\n'
-        '$customMsg';
-
+        '${isUp ? line.telegramMessageUp : line.telegramMessageDown}';
     TelegramService.sendMessage(msg);
   }
 
   Future<double?> _readChartPercent() async {
     try {
-      final result =
-          await _channel.invokeMethod('readChartPercent');
+      final result = await _channel.invokeMethod('readChartPercent');
       if (result == null) return null;
       return (result as num).toDouble();
-    } catch (_) {
-      return null;
-    }
+    } catch (_) { return null; }
   }
 }
