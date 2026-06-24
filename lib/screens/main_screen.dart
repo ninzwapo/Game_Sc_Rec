@@ -89,8 +89,8 @@ class _MainScreenState extends State<MainScreen> {
     final active = await FlutterOverlayWindow.isActive();
     if (!active) {
       await FlutterOverlayWindow.showOverlay(
-        height: WindowSize.matchParent,
-        width: WindowSize.matchParent,
+        height: 600,
+        width: 300,
         alignment: OverlayAlignment.centerRight,
         flag: OverlayFlag.defaultFlag,
         overlayTitle: 'Game Recorder',
